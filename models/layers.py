@@ -83,14 +83,17 @@ def build_pruning_mask(scores, k, prune_type, structured_dim=0, nm_n=None, nm_m=
         raise ValueError("Structured pruning only supports Conv2d and Linear layers.")
     if prune_type == "nm":
         # N:M: keep nm_n weights per block of size nm_m within each row.
-        # For Conv2d, follow Apex-style layout by permuting to (kH, kW, out, in)
-        # before grouping into blocks, then permute back.
+        # For Conv2d, align with thesis N:M layout by permuting to (kH, kW, out, in),
+        # reshaping to (out, -1) for per-output-channel grouping, then permute back.
         if nm_n is None or nm_m is None:
             raise ValueError("N:M pruning requires nm_n and nm_m settings.")
         if abs_scores.dim() == 4:
             scores_nm = abs_scores.permute(2, 3, 0, 1)
-            mask_nm = GetSubnetNM.apply(scores_nm, nm_n, nm_m)
-            return mask_nm.permute(2, 3, 0, 1)
+            permuted_shape = scores_nm.shape
+            scores_matrix = scores_nm.reshape(abs_scores.shape[0], -1)
+            mask_matrix = GetSubnetNM.apply(scores_matrix, nm_n, nm_m)
+            mask_nm = mask_matrix.reshape(permuted_shape).permute(2, 3, 0, 1)
+            return mask_nm
         return GetSubnetNM.apply(abs_scores, nm_n, nm_m)
     raise ValueError(f"Unknown prune_type '{prune_type}'.")
 
