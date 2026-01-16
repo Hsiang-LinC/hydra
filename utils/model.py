@@ -6,7 +6,7 @@ import os
 import math
 import numpy as np
 
-from models.layers import SubnetConv, SubnetLinear
+from models.layers import SubnetConv, SubnetLinear, build_pruning_mask
 
 # TODO: avoid freezing bn_params
 # Some utils are borrowed from https://github.com/allenai/hidden-networks
@@ -35,6 +35,32 @@ def set_prune_rate_model(model, prune_rate):
     for _, v in model.named_modules():
         if hasattr(v, "set_prune_rate"):
             v.set_prune_rate(prune_rate)
+
+
+def set_prune_config_model(model, prune_type, structured_dim=0, nm_n=None, nm_m=None):
+    for _, v in model.named_modules():
+        if hasattr(v, "set_prune_config"):
+            v.set_prune_config(prune_type, structured_dim, nm_n, nm_m)
+
+
+def get_prunable_layer_names(model):
+    layer_names = []
+    for name, module in model.named_modules():
+        if hasattr(module, "set_prune_rate"):
+            layer_names.append(name)
+    return layer_names
+
+
+def exclude_outer_layers(model):
+    prunable = get_prunable_layer_names(model)
+    if not prunable:
+        return
+    outer = {prunable[0], prunable[-1]}
+    for name, module in model.named_modules():
+        if name in outer and hasattr(module, "set_prune_rate"):
+            module.set_prune_rate(1.0)
+            if hasattr(module, "set_prune_config"):
+                module.set_prune_config("unstructured", 0, None, None)
 
 
 def get_layers(layer_type):
@@ -137,6 +163,21 @@ def prepare_model(model, args):
     """
 
     set_prune_rate_model(model, args.k)
+    set_prune_config_model(
+        model,
+        args.prune_type,
+        structured_dim=args.structured_dim,
+        nm_n=args.nm_n if args.nm_n > 0 else None,
+        nm_m=args.nm_m if args.nm_m > 0 else None,
+    )
+    if args.exclude_outer:
+        exclude_outer_layers(model)
+
+    if args.prune_type == "structured":
+        assert args.structured_dim == 0, "Structured pruning only supports dim=0."
+    if args.prune_type == "nm":
+        assert args.nm_n > 0 and args.nm_m > 0, "N:M pruning requires nm_n and nm_m."
+        assert args.nm_n <= args.nm_m, "N:M pruning requires nm_n <= nm_m."
 
     if args.exp_mode == "pretrain":
         print(f"#################### Pre-training network ####################")
@@ -168,7 +209,7 @@ def prepare_model(model, args):
     initialize_scores(model, args.scores_init_type)
 
 
-def subnet_to_dense(subnet_dict, p):
+def subnet_to_dense(subnet_dict, args, model=None):
     """
         Convert a subnet state dict (with subnet layers) to dense i.e., which can be directly 
         loaded in network with dense layers.
@@ -181,17 +222,27 @@ def subnet_to_dense(subnet_dict, p):
             dense[k] = v
 
     # update dense variables
+    excluded_layers = set()
+    if args.exclude_outer and model is not None:
+        prunable = get_prunable_layer_names(model)
+        if prunable:
+            excluded_layers = {prunable[0], prunable[-1]}
+
     for (k, v) in subnet_dict.items():
         if "popup_scores" in k:
-            s = torch.abs(subnet_dict[k])
-
-            out = s.clone()
-            _, idx = s.flatten().sort()
-            j = int((1 - p) * s.numel())
-
-            flat_out = out.flatten()
-            flat_out[idx[:j]] = 0
-            flat_out[idx[j:]] = 1
+            layer_name = k.replace(".popup_scores", "")
+            if layer_name in excluded_layers:
+                dense[layer_name + ".weight"] = subnet_dict[layer_name + ".weight"]
+                continue
+            scores = subnet_dict[k]
+            out = build_pruning_mask(
+                scores,
+                args.k,
+                args.prune_type,
+                structured_dim=args.structured_dim,
+                nm_n=args.nm_n if args.nm_n > 0 else None,
+                nm_m=args.nm_m if args.nm_m > 0 else None,
+            )
             dense[k.replace("popup_scores", "weight")] = (
                 subnet_dict[k.replace("popup_scores", "weight")] * out
             )
@@ -243,4 +294,3 @@ def sanity_check_paramter_updates(model, last_ckpt):
                 s1 = getattr(v, "popup_scores").data.cpu()
                 s2 = last_ckpt[i + ".popup_scores"].data.cpu()
             return not torch.allclose(w1, w2), not torch.allclose(s1, s2)
-

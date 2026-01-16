@@ -61,6 +61,44 @@ def parse_args():
     )
 
     parser.add_argument(
+        "--prune-type",
+        type=str,
+        default="unstructured",
+        choices=("unstructured", "structured", "nm"),
+        help="Pruning type: unstructured | structured | nm",
+    )
+    parser.add_argument(
+        "--structured-dim",
+        type=int,
+        default=0,
+        help="Structured pruning dimension (dim=0 prunes output channels/neurons)",
+    )
+    parser.add_argument(
+        "--nm-n",
+        type=int,
+        default=0,
+        help="N value for N:M pruning (kept per block, requires nm_n > 0 with prune-type=nm)",
+    )
+    parser.add_argument(
+        "--nm-m",
+        type=int,
+        default=0,
+        help="M value for N:M pruning (block size, requires nm_m > 0 with prune-type=nm)",
+    )
+    parser.add_argument(
+        "--exclude-outer",
+        action="store_true",
+        default=True,
+        help="Exclude first/last layer from pruning",
+    )
+    parser.add_argument(
+        "--include-outer",
+        action="store_false",
+        dest="exclude_outer",
+        help="Allow pruning first/last layer",
+    )
+
+    parser.add_argument(
         "--scaled-score-init",
         action="store_true",
         default=False,
