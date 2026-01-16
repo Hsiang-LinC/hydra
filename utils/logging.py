@@ -9,7 +9,13 @@ from utils.model import subnet_to_dense
 
 
 def save_checkpoint(
-    state, is_best, args, result_dir, filename="checkpoint.pth.tar", save_dense=False
+    state,
+    is_best,
+    args,
+    result_dir,
+    filename="checkpoint.pth.tar",
+    save_dense=False,
+    model=None,
 ):
     torch.save(state, os.path.join(result_dir, filename))
     if is_best:
@@ -19,9 +25,9 @@ def save_checkpoint(
         )
 
     if save_dense:
-        state["state_dict"] = subnet_to_dense(state["state_dict"], args.k)
+        state["state_dict"] = subnet_to_dense(state["state_dict"], args, model=model)
         torch.save(
-            subnet_to_dense(state, args.k),
+            subnet_to_dense(state, args, model=model),
             os.path.join(result_dir, "checkpoint_dense.pth.tar"),
         )
         if is_best:
@@ -133,4 +139,3 @@ class ProgressMeter(object):
     def write_to_tensorboard(self, writer, prefix, global_step):
         for meter in self.meters:
             writer.add_scalar(f"{prefix}/{meter.name}", meter.val, global_step)
-

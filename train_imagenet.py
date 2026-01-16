@@ -246,6 +246,7 @@ def main():
             args,
             result_dir=os.path.join(result_sub_dir, "checkpoint"),
             save_dense=args.save_dense,
+            model=model,
         )
 
         logger.info(
